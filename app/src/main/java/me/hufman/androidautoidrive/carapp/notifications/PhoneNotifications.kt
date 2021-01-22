@@ -52,8 +52,10 @@ class PhoneNotifications(val iDriveConnectionStatus: IDriveConnectionStatus, val
 	var passengerSeated = false             // whether a passenger is seated
 
 	init {
+		// create a placeholder app to give to the callback
+		carAppSwappable = RHMIApplicationSwappable(RHMIApplicationConcrete())
 		val cdsData = CDSDataProvider()
-		carappListener = CarAppListener(cdsData)
+		carappListener = CarAppListener(carAppSwappable, cdsData)
 		carConnection = IDriveConnection.getEtchConnection(iDriveConnectionStatus.host ?: "127.0.0.1", iDriveConnectionStatus.port ?: 8003, carappListener)
 		val appCert = carAppAssets.getAppCertificate(iDriveConnectionStatus.brand ?: "")?.readBytes() as ByteArray
 		val sas_challenge = carConnection.sas_certificate(appCert)
@@ -66,9 +68,8 @@ class PhoneNotifications(val iDriveConnectionStatus: IDriveConnectionStatus, val
 		// set up the app in the car
 		// synchronized to ensure that events happen after we are done
 		synchronized(carConnection) {
-			carAppSwappable = RHMIApplicationSwappable(createRhmiApp())
+			carAppSwappable.app = createRhmiApp()
 			carApp = RHMIApplicationSynchronized(carAppSwappable, carConnection)
-			carappListener.app = carApp
 			carApp.loadFromXML(carAppAssets.getUiDescription()?.readBytes() as ByteArray)
 
 			val unclaimedStates = LinkedList(carApp.states.values)
@@ -180,9 +181,8 @@ class PhoneNotifications(val iDriveConnectionStatus: IDriveConnectionStatus, val
 		}
 	}
 
-	inner class CarAppListener(val cdsEventHandler: CDSEventHandler): BaseBMWRemotingClient() {
+	inner class CarAppListener(val rhmiApplication: RHMIApplication, val cdsEventHandler: CDSEventHandler): BaseBMWRemotingClient() {
 		var server: BMWRemotingServer? = null
-		var app: RHMIApplication? = null
 
 		fun synced() {
 			synchronized(server!!) {
@@ -212,7 +212,7 @@ class PhoneNotifications(val iDriveConnectionStatus: IDriveConnectionStatus, val
 			Log.w(TAG, "Received rhmi_onActionEvent: handle=$handle ident=$ident actionId=$actionId")
 			synced()
 			try {
-				app?.actions?.get(actionId)?.asRAAction()?.rhmiActionCallback?.onActionEvent(args)
+				rhmiApplication.actions[actionId]?.asRAAction()?.rhmiActionCallback?.onActionEvent(args)
 				synchronized(server!!) {
 					server?.rhmi_ackActionEvent(handle, actionId, 1, true)
 				}
@@ -234,10 +234,10 @@ class PhoneNotifications(val iDriveConnectionStatus: IDriveConnectionStatus, val
 			Log.w(TAG, msg)
 			synced()
 
-			val state = app?.states?.get(componentId)
+			val state = rhmiApplication.states[componentId]
 			state?.onHmiEvent(eventId, args)
 
-			val component = app?.components?.get(componentId)
+			val component = rhmiApplication.components[componentId]
 			component?.onHmiEvent(eventId, args)
 		}
 

@@ -26,10 +26,10 @@ const val TAG = "MapView"
 
 class MapApp(iDriveConnectionStatus: IDriveConnectionStatus, securityAccess: SecurityAccess, val carAppAssets: CarAppResources, val mapAppMode: MapAppMode, val interaction: MapInteractionController, val map: VirtualDisplayScreenCapture) {
 
-	val carappListener = CarAppListener()
+	val carappListener: CarAppListener
 	val carConnection: BMWRemotingServer
 	var mapResultsUpdater = MapResultsReceiver(MapResultsUpdater())
-	val carApp: RHMIApplication
+	val carApp: RHMIApplicationSwappable
 	var searchResults = ArrayList<MapResult>()
 	var selectedResult: MapResult? = null
 
@@ -45,6 +45,9 @@ class MapApp(iDriveConnectionStatus: IDriveConnectionStatus, securityAccess: Sec
 	})
 
 	init {
+		// create a placeholder app to give to the callback
+		carApp = RHMIApplicationSwappable(RHMIApplicationConcrete())
+		carappListener = CarAppListener(carApp)
 		carConnection = IDriveConnection.getEtchConnection(iDriveConnectionStatus.host ?: "127.0.0.1", iDriveConnectionStatus.port ?: 8003, carappListener)
 		val appCert = carAppAssets.getAppCertificate(iDriveConnectionStatus.brand ?: "")?.readBytes() as ByteArray
 		val sas_challenge = carConnection.sas_certificate(appCert)
@@ -59,8 +62,7 @@ class MapApp(iDriveConnectionStatus: IDriveConnectionStatus, securityAccess: Sec
 		RHMIUtils.rhmi_setResourceCached(carConnection, rhmiHandle, BMWRemoting.RHMIResourceType.IMAGEDB, carAppAssets.getImagesDB("common"))
 		carConnection.rhmi_initialize(rhmiHandle)
 
-		carApp = RHMIApplicationSynchronized(RHMIApplicationIdempotent(RHMIApplicationEtch(carConnection, rhmiHandle)), carConnection)
-		carappListener.app = carApp
+		carApp.app = RHMIApplicationSynchronized(RHMIApplicationIdempotent(RHMIApplicationEtch(carConnection, rhmiHandle)), carConnection)
 		carApp.loadFromXML(carAppAssets.getUiDescription()?.readBytes() as ByteArray)
 
 		// figure out the components to use
@@ -136,13 +138,12 @@ class MapApp(iDriveConnectionStatus: IDriveConnectionStatus, securityAccess: Sec
 		frameUpdater.shutDown()
 	}
 
-	inner class CarAppListener: BaseBMWRemotingClient() {
+	class CarAppListener(val rhmiApplication: RHMIApplication): BaseBMWRemotingClient() {
 		var server: BMWRemotingServer? = null
-		var app: RHMIApplication? = null
 		override fun rhmi_onActionEvent(handle: Int?, ident: String?, actionId: Int?, args: MutableMap<*, *>?) {
 			Log.w(TAG, "Received rhmi_onActionEvent: handle=$handle ident=$ident actionId=$actionId args=$args")
 			try {
-				app?.actions?.get(actionId)?.asRAAction()?.rhmiActionCallback?.onActionEvent(args)
+				rhmiApplication.actions[actionId]?.asRAAction()?.rhmiActionCallback?.onActionEvent(args)
 			} catch (e: Exception) {
 				Log.e(me.hufman.androidautoidrive.carapp.notifications.TAG, "Exception while calling onActionEvent handler!", e)
 			}
@@ -154,8 +155,8 @@ class MapApp(iDriveConnectionStatus: IDriveConnectionStatus, securityAccess: Sec
 			Log.w(TAG, msg)
 
 			// generic event handler
-			app?.states?.get(componentId)?.onHmiEvent(eventId, args)
-			app?.components?.get(componentId)?.onHmiEvent(eventId, args)
+			rhmiApplication.states[componentId]?.onHmiEvent(eventId, args)
+			rhmiApplication.components[componentId]?.onHmiEvent(eventId, args)
 		}
 	}
 

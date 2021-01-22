@@ -44,8 +44,10 @@ class MusicApp(val iDriveConnectionStatus: IDriveConnectionStatus, val securityA
 	val customActionsView: CustomActionsView
 
 	init {
+		// create a placeholder app to give to the callback
+		carAppSwappable = RHMIApplicationSwappable(RHMIApplicationConcrete())
 		val cdsData = CDSDataProvider()
-		val carappListener = CarAppListener(cdsData)
+		val carappListener = CarAppListener(carAppSwappable, cdsData)
 		carConnection = IDriveConnection.getEtchConnection(iDriveConnectionStatus.host ?: "127.0.0.1", iDriveConnectionStatus.port ?: 8003, carappListener)
 		val appCert = carAppAssets.getAppCertificate(iDriveConnectionStatus.brand ?: "")?.readBytes() as ByteArray
 		val sas_challenge = carConnection.sas_certificate(appCert)
@@ -54,9 +56,8 @@ class MusicApp(val iDriveConnectionStatus: IDriveConnectionStatus, val securityA
 		carappListener.server = carConnection
 
 		synchronized(carConnection) {
-			carAppSwappable = RHMIApplicationSwappable(createRhmiApp())
+			carAppSwappable.app = createRhmiApp()
 			carApp = RHMIApplicationSynchronized(carAppSwappable, carConnection)
-			carappListener.app = carApp
 			carApp.loadFromXML(carAppAssets.getUiDescription()?.readBytes() as ByteArray)
 
 			avContext = AVContextHandler(iDriveConnectionStatus, carConnection, musicController, graphicsHelpers, musicAppMode)
@@ -200,13 +201,12 @@ class MusicApp(val iDriveConnectionStatus: IDriveConnectionStatus, val securityA
 		amAppList.setApps(amApps)
 	}
 
-	inner class CarAppListener(val cdsEventHandler: CDSEventHandler): BaseBMWRemotingClient() {
+	inner class CarAppListener(val rhmiApplication: RHMIApplication, val cdsEventHandler: CDSEventHandler): BaseBMWRemotingClient() {
 		var server: BMWRemotingServer? = null
-		var app: RHMIApplication? = null
 		override fun rhmi_onActionEvent(handle: Int?, ident: String?, actionId: Int?, args: MutableMap<*, *>?) {
 //			Log.i(TAG, "Received rhmi_onActionEvent: handle=$handle ident=$ident actionId=$actionId")
 			try {
-				app?.actions?.get(actionId)?.asRAAction()?.rhmiActionCallback?.onActionEvent(args)
+				rhmiApplication.actions[actionId]?.asRAAction()?.rhmiActionCallback?.onActionEvent(args)
 				synchronized(server!!) {
 					server?.rhmi_ackActionEvent(handle, actionId, 1, true)
 				}
@@ -228,8 +228,8 @@ class MusicApp(val iDriveConnectionStatus: IDriveConnectionStatus, val securityA
 			Log.i(TAG, msg)
 			try {
 				// generic event handler
-				app?.states?.get(componentId)?.onHmiEvent(eventId, args)
-				app?.components?.get(componentId)?.onHmiEvent(eventId, args)
+				rhmiApplication.states[componentId]?.onHmiEvent(eventId, args)
+				rhmiApplication.components[componentId]?.onHmiEvent(eventId, args)
 			} catch (e: Exception) {
 				Log.e(TAG, "Received exception while handling rhmi_onHmiEvent", e)
 			}
@@ -285,7 +285,7 @@ class MusicApp(val iDriveConnectionStatus: IDriveConnectionStatus, val securityA
 			appId ?: return
 			val appInfo = amAppList.getAppInfo(appId) ?: return
 			avContext.av_requestContext(appInfo)
-			val focusEvent = app?.events?.values?.filterIsInstance<RHMIEvent.FocusEvent>()?.sortedBy { it.id }?.firstOrNull()
+			val focusEvent = rhmiApplication.events.values.filterIsInstance<RHMIEvent.FocusEvent>().minByOrNull { it.id }
 			try {
 				focusEvent?.triggerEvent(mapOf(0.toByte() to playbackView.state.id))
 			} catch (e: Exception) {
