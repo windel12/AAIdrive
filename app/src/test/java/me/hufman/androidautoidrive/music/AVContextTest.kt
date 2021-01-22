@@ -67,7 +67,7 @@ class AVContextTest {
 	/** Test that a Spotify AM icon lines up where the Spotify RHMI icon goes */
 	@Test
 	fun testAmSpotifyWeight() {
-		val amHandler = AMAppList<MusicAppInfo>(mock(), mock(), "test")
+		val amHandler = AMAppList<MusicAppInfo>(mock(), "test")
 		val spotifyAm = amHandler.getAMInfo(MusicAppInfo("Spotify", mock(), "com.spotify.music", null).apply {
 			weightAdjustment = -173
 		})
@@ -113,7 +113,8 @@ class AVContextTest {
 	@Test
 	fun testAmRebuild() {
 		val mockServer = MockBMWRemotingServer()
-		val amAppList = AMAppList<ConcreteAMAppInfo>(mockServer, mock(), "testIdent")
+		val amAppList = AMAppList<ConcreteAMAppInfo>(mock(), "testIdent")
+		amAppList.connection = mockServer
 		val app1 = ConcreteAMAppInfo("test1", "test1", mock(), AMCategory.MULTIMEDIA)
 		val app2 = ConcreteAMAppInfo("test2", "test2", mock(), AMCategory.MULTIMEDIA)
 		amAppList.setApps(listOf(app1, app2))
@@ -139,7 +140,27 @@ class AVContextTest {
 		assertEquals(3, mockServer.amHandles.size)
 	}
 
-	/** Test that some apps are categorized as Radio apps */
+	/** Test adding apps before the connection is ready */
+	@Test
+	fun testAmDeferred() {
+		val mockServer = MockBMWRemotingServer()
+		val amAppList = AMAppList<ConcreteAMAppInfo>(mock(), "testIdent")
+		val app1 = ConcreteAMAppInfo("test1", "test1", mock(), AMCategory.MULTIMEDIA)
+		val app2 = ConcreteAMAppInfo("test2", "test2", mock(), AMCategory.MULTIMEDIA)
+		amAppList.setApps(listOf(app1, app2))
+
+		amAppList.connection = mockServer
+		assertEquals(2, mockServer.amApps.size)
+		assertEquals(1, mockServer.amHandles.size)
+
+		// test that it recreates successfully on a new connection
+		val mockServer2 = MockBMWRemotingServer()
+		amAppList.connection = mockServer2
+		assertEquals(2, mockServer2.amApps.size)
+		assertEquals(1, mockServer2.amHandles.size)
+	}
+
+		/** Test that some apps are categorized as Radio apps */
 	@Test
 	fun testAmRadio() {
 		val mockPackageManager = mock<PackageManager> {

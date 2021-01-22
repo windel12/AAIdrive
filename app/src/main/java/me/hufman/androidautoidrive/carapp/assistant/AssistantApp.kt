@@ -12,18 +12,24 @@ import me.hufman.idriveconnectionkit.android.security.SecurityAccess
 
 class AssistantApp(val iDriveConnectionStatus: IDriveConnectionStatus, val securityAccess: SecurityAccess, val carAppAssets: CarAppResources, val controller: AssistantController, val graphicsHelpers: GraphicsHelpers) {
 	val TAG = "AssistantApp"
-	val carConnection = createRHMIApp()
-	val amAppList = AMAppList<AssistantAppInfo>(carConnection, graphicsHelpers, "me.hufman.androidautoidrive.assistant")
+	val carConnection: BMWRemotingServer
+	val amAppList: AMAppList<AssistantAppInfo>
 
-	private fun createRHMIApp(): BMWRemotingServer {
-		val carappListener = CarAppListener()
-		val carConnection = IDriveConnection.getEtchConnection(iDriveConnectionStatus.host ?: "127.0.0.1", iDriveConnectionStatus.port ?: 8003, carappListener)
+	init {
+		amAppList = AMAppList(graphicsHelpers, "me.hufman.androidautoidrive.assistant")
+		val carappListener = CarAppListener(amAppList)
+		carConnection = IDriveConnection.getEtchConnection(iDriveConnectionStatus.host ?: "127.0.0.1", iDriveConnectionStatus.port ?: 8003, carappListener)
 		val appCert = carAppAssets.getAppCertificate(iDriveConnectionStatus.brand ?: "")?.readBytes() as ByteArray
 		val sas_challenge = carConnection.sas_certificate(appCert)
 		val sas_login = securityAccess.signChallenge(challenge=sas_challenge)
 		carConnection.sas_login(sas_login)
 
-		return carConnection
+		amAppList.connection = carConnection
+		amAppList.callback = { assistant ->
+			controller.triggerAssistant(assistant)
+			Thread.sleep(2000)
+			amAppList.redrawApp(assistant)
+		}
 	}
 
 	fun onCreate() {
@@ -34,13 +40,11 @@ class AssistantApp(val iDriveConnectionStatus: IDriveConnectionStatus, val secur
 	fun onDestroy() {
 	}
 
-	inner class CarAppListener: BaseBMWRemotingClient() {
+	class CarAppListener(val amAppList: AMAppList<AssistantAppInfo>): BaseBMWRemotingClient() {
 		override fun am_onAppEvent(handle: Int?, ident: String?, appId: String?, event: BMWRemoting.AMEvent?) {
 			appId ?: return
 			val assistant = amAppList.getAppInfo(appId) ?: return
-			controller.triggerAssistant(assistant)
-			Thread.sleep(2000)
-			amAppList.redrawApp(assistant)
+			amAppList.callback(assistant)
 		}
 	}
 }

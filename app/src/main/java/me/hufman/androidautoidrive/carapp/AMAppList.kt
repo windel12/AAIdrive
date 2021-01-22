@@ -44,13 +44,23 @@ interface AMAppInfo {
 class ConcreteAMAppInfo(override val packageName: String, override val name: String,
                         override val icon: Drawable, override val category: AMCategory): AMAppInfo
 
-class AMAppList<T: AMAppInfo>(val connection: BMWRemotingServer, val graphicsHelpers: GraphicsHelpers, val amIdent: String) {
+class AMAppList<T: AMAppInfo>(val graphicsHelpers: GraphicsHelpers, val amIdent: String) {
 	companion object {
 		val TAG = "AMAppList"
-
 	}
-	private var amHandle: Int = createAm()
+
+	var connection: BMWRemotingServer? = null
+		set(value) {
+			field = value
+			amHandle = createAm()
+			setApps(allApps)
+		}
+
+	private var amHandle: Int = 0
+	private var allApps = emptyList<T>()
 	private val knownApps = HashMap<String, T>()        // keyed by amAppIdentifier
+
+	var callback: (T) -> Unit = { }
 
 	fun getAMInfo(app: AMAppInfo): Map<Int, Any> {
 		val amInfo = mutableMapOf<Int, Any>(
@@ -82,6 +92,8 @@ class AMAppList<T: AMAppInfo>(val connection: BMWRemotingServer, val graphicsHel
 	 * Updates the list of displayed apps
 	 */
 	fun setApps(apps: List<T>) {
+		allApps = apps      // the desired apps, remembered across connections
+		val connection = this.connection ?: return
 		synchronized(connection) {
 			// if there are any extra apps, clear out the list
 			val updatedApps = apps.map {it.amAppIdentifier to it}.toMap()
@@ -93,7 +105,6 @@ class AMAppList<T: AMAppInfo>(val connection: BMWRemotingServer, val graphicsHel
 			}
 			if (stillCurrent.size < knownApps.size) {
 				reinitAm()
-				knownApps.clear()
 			}
 
 			// then create all the apps
@@ -113,6 +124,7 @@ class AMAppList<T: AMAppInfo>(val connection: BMWRemotingServer, val graphicsHel
 	}
 
 	private fun reinitAm() {
+		val connection = connection ?: return
 		synchronized(connection) {
 			val oldHandle = amHandle
 			connection.am_removeAppEventHandler(oldHandle, amIdent)
@@ -124,15 +136,20 @@ class AMAppList<T: AMAppInfo>(val connection: BMWRemotingServer, val graphicsHel
 	}
 
 	private fun createAm(): Int {
+		val connection = connection ?: return 0
 		return synchronized(connection) {
 			val handle = connection.am_create("0", "\u0000\u0000\u0000\u0000\u0000\u0002\u0000\u0000".toByteArray())
 			connection.am_addAppEventHandler(handle, amIdent)
+			knownApps.clear()   // prepare to draw all new list
 			handle
 		}
 	}
 
 	private fun createApp(app: T) {
 		Log.d(TAG, "Creating am app for app ${app.name}")
-		connection.am_registerApp(amHandle, app.amAppIdentifier, getAMInfo(app))
+		val connection = connection ?: return
+		synchronized(connection) {
+			connection.am_registerApp(amHandle, app.amAppIdentifier, getAMInfo(app))
+		}
 	}
 }

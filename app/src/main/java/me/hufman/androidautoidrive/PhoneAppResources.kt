@@ -2,6 +2,7 @@ package me.hufman.androidautoidrive
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.Icon
@@ -15,6 +16,7 @@ interface PhoneAppResources {
 	fun getAppIcon(packageName: String): Drawable
 	fun getAppName(packageName: String): String
 	fun getBitmapDrawable(bitmap: Bitmap): Drawable
+	fun getBitmapDrawable(data: ByteArray): Drawable
 	fun getIconDrawable(icon: Icon): Drawable?
 	fun getUriDrawable(uri: String): Drawable
 }
@@ -30,6 +32,10 @@ class PhoneAppResourcesAndroid(val context: Context): PhoneAppResources {
 	override fun getBitmapDrawable(bitmap: Bitmap): Drawable {
 		return BitmapDrawable(context.resources, bitmap)
 	}
+	override fun getBitmapDrawable(data: ByteArray): Drawable {
+		return BitmapDrawable(context.resources, BitmapFactory.decodeByteArray(data, 0, data.size))
+	}
+
 	override fun getIconDrawable(icon: Icon): Drawable? {
 		return icon.loadDrawable(context)
 	}

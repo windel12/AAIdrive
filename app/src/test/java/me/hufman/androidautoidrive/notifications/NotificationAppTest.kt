@@ -39,8 +39,11 @@ import org.junit.Before
 import org.junit.Test
 
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.lang.reflect.Field
 import java.lang.reflect.Modifier
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 /**
  * Example local unit test, which will execute on the development machine (host).
@@ -53,17 +56,23 @@ class NotificationAppTest {
 	val securityAccess = mock<SecurityAccess> {
 		on { signChallenge(any(), any() )} doReturn ByteArray(512)
 	}
+	val imagesDb = ByteArrayOutputStream().also {
+		val zip = ZipOutputStream(it)
+		zip.putNextEntry(ZipEntry("157.png"))
+		zip.closeEntry()
+	}.toByteArray()
 	val carAppResources = mock<CarAppResources> {
 		on { getAppCertificate() } doReturn ByteArrayInputStream(ByteArray(0))
 		on { getUiDescription() } doAnswer { this.javaClass.classLoader!!.getResourceAsStream("ui_description_onlineservices_v1.xml") }
-		on { getImagesDB(any()) } doReturn ByteArrayInputStream(ByteArray(0))
+		on { getImagesDB(any()) } doAnswer { ByteArrayInputStream(imagesDb) }
 		on { getTextsDB(any()) } doReturn ByteArrayInputStream(ByteArray(0))
 	}
 
 	val phoneAppResources = mock<PhoneAppResources> {
 		on { getAppName(any()) } doReturn "Test AppName"
 		on { getAppIcon(any())} doReturn mock<Drawable>()
-		on { getBitmapDrawable(any())} doReturn mock<Drawable>()
+		on { getBitmapDrawable(any<Bitmap>())} doReturn mock<Drawable>()
+		on { getBitmapDrawable(any<ByteArray>())} doReturn mock<Drawable>()
 		on { getIconDrawable(any())} doReturn mock<Drawable>()
 		on { getUriDrawable(any())} doReturn mock<Drawable>()
 	}

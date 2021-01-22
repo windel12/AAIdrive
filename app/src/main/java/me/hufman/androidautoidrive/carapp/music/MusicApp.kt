@@ -46,8 +46,9 @@ class MusicApp(val iDriveConnectionStatus: IDriveConnectionStatus, val securityA
 	init {
 		// create a placeholder app to give to the callback
 		carAppSwappable = RHMIApplicationSwappable(RHMIApplicationConcrete())
+		amAppList = AMAppList(graphicsHelpers, "me.hufman.androidautoidrive.music")
 		val cdsData = CDSDataProvider()
-		val carappListener = CarAppListener(carAppSwappable, cdsData)
+		val carappListener = CarAppListener(carAppSwappable, amAppList, cdsData)
 		carConnection = IDriveConnection.getEtchConnection(iDriveConnectionStatus.host ?: "127.0.0.1", iDriveConnectionStatus.port ?: 8003, carappListener)
 		val appCert = carAppAssets.getAppCertificate(iDriveConnectionStatus.brand ?: "")?.readBytes() as ByteArray
 		val sas_challenge = carConnection.sas_certificate(appCert)
@@ -97,9 +98,26 @@ class MusicApp(val iDriveConnectionStatus: IDriveConnectionStatus, val securityA
 			}
 		}
 
-		// set up AM Apps
-		amAppList = AMAppList(carConnection, graphicsHelpers, "me.hufman.androidautoidrive.music")
+		// set up AM callback
+		amAppList.connection = carConnection
+		amAppList.callback = { appInfo ->
+			avContext.av_requestContext(appInfo)
+			val focusEvent = carApp.events.values.filterIsInstance<RHMIEvent.FocusEvent>().minByOrNull { it.id }
+			try {
+				focusEvent?.triggerEvent(mapOf(0.toByte() to playbackView.state.id))
+			} catch (e: Exception) {
+				Log.i(TAG, "Failed to trigger focus event for AM icon, recreating RHMI and trying again")
+				try {
+					recreateRhmiApp()
+					focusEvent?.triggerEvent(mapOf(0.toByte() to playbackView.state.id))
+				} catch (e: Exception) {
+					Log.e(TAG, "Received exception while handling am_onAppEvent", e)
+				}
+			}
+			amAppList.redrawApp(appInfo)
+		}
 
+		// set up App Discovery
 		musicAppDiscovery.listener = Runnable {
 			// make sure the car has AV Context
 			avContext.createAvHandle()
@@ -201,7 +219,7 @@ class MusicApp(val iDriveConnectionStatus: IDriveConnectionStatus, val securityA
 		amAppList.setApps(amApps)
 	}
 
-	inner class CarAppListener(val rhmiApplication: RHMIApplication, val cdsEventHandler: CDSEventHandler): BaseBMWRemotingClient() {
+	inner class CarAppListener(val rhmiApplication: RHMIApplication, val amAppList: AMAppList<MusicAppInfo>, val cdsEventHandler: CDSEventHandler): BaseBMWRemotingClient() {
 		var server: BMWRemotingServer? = null
 		override fun rhmi_onActionEvent(handle: Int?, ident: String?, actionId: Int?, args: MutableMap<*, *>?) {
 //			Log.i(TAG, "Received rhmi_onActionEvent: handle=$handle ident=$ident actionId=$actionId")
@@ -284,22 +302,7 @@ class MusicApp(val iDriveConnectionStatus: IDriveConnectionStatus, val securityA
 			Log.i(TAG, "Received am_onAppEvent: handle=$handle ident=$ident appId=$appId event=$event")
 			appId ?: return
 			val appInfo = amAppList.getAppInfo(appId) ?: return
-			avContext.av_requestContext(appInfo)
-			val focusEvent = rhmiApplication.events.values.filterIsInstance<RHMIEvent.FocusEvent>().minByOrNull { it.id }
-			try {
-				focusEvent?.triggerEvent(mapOf(0.toByte() to playbackView.state.id))
-			} catch (e: Exception) {
-				Log.i(TAG, "Failed to trigger focus event for AM icon, recreating RHMI and trying again")
-				try {
-					recreateRhmiApp()
-					focusEvent?.triggerEvent(mapOf(0.toByte() to playbackView.state.id))
-				} catch (e: Exception) {
-					Log.e(TAG, "Received exception while handling am_onAppEvent", e)
-				}
-			}
-			synchronized(server!!) {
-				amAppList.redrawApp(appInfo)
-			}
+			amAppList.callback(appInfo)
 		}
 
 		override fun cds_onPropertyChangedEvent(handle: Int?, ident: String?, propertyName: String?, propertyValue: String?) {

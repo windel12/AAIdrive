@@ -41,7 +41,7 @@ class PhoneNotifications(val iDriveConnectionStatus: IDriveConnectionStatus, val
 	val carConnection: BMWRemotingServer
 	val carAppSwappable: RHMIApplicationSwappable
 	val carApp: RHMIApplicationSynchronized
-	val amHandle: Int
+	val amAppList: AMAppList<AMAppInfo>
 	val focusEvent: RHMIEvent.FocusEvent
 	val readHistory = PopupHistory()       // suppress any duplicate New Notification actions
 	val viewPopup: PopupView                // notification about notification
@@ -54,8 +54,9 @@ class PhoneNotifications(val iDriveConnectionStatus: IDriveConnectionStatus, val
 	init {
 		// create a placeholder app to give to the callback
 		carAppSwappable = RHMIApplicationSwappable(RHMIApplicationConcrete())
+		amAppList = AMAppList(graphicsHelpers, "me.hufman.androidautoidrive.notifications")
 		val cdsData = CDSDataProvider()
-		carappListener = CarAppListener(carAppSwappable, cdsData)
+		carappListener = CarAppListener(carAppSwappable, amAppList, cdsData)
 		carConnection = IDriveConnection.getEtchConnection(iDriveConnectionStatus.host ?: "127.0.0.1", iDriveConnectionStatus.port ?: 8003, carappListener)
 		val appCert = carAppAssets.getAppCertificate(iDriveConnectionStatus.brand ?: "")?.readBytes() as ByteArray
 		val sas_challenge = carConnection.sas_certificate(appCert)
@@ -78,7 +79,7 @@ class PhoneNotifications(val iDriveConnectionStatus: IDriveConnectionStatus, val
 			viewPopup = PopupView(unclaimedStates.removeFirst { PopupView.fits(it) }, phoneAppResources)
 			viewList = NotificationListView(unclaimedStates.removeFirst { NotificationListView.fits(it) }, graphicsHelpers, notificationSettings, readoutInteractions)
 			viewDetails = DetailsView(unclaimedStates.removeFirst { DetailsView.fits(it) }, phoneAppResources, graphicsHelpers, controller, readoutInteractions)
-
+			focusEvent = carApp.events.values.filterIsInstance<RHMIEvent.FocusEvent>().first()
 			stateInput = carApp.states.values.filterIsInstance<RHMIState.PlainState>().first {
 				it.componentsList.filterIsInstance<RHMIComponent.Input>().isNotEmpty()
 			}
@@ -91,9 +92,23 @@ class PhoneNotifications(val iDriveConnectionStatus: IDriveConnectionStatus, val
 			}
 
 			// set up the AM icon in the "Addressbook"/Communications section
-			amHandle = carConnection.am_create("0", "\u0000\u0000\u0000\u0000\u0000\u0002\u0000\u0000".toByteArray())
-			carConnection.am_addAppEventHandler(amHandle, "me.hufman.androidautoidrive.notifications")
-			focusEvent = carApp.events.values.filterIsInstance<RHMIEvent.FocusEvent>().first()
+			amAppList.connection = carConnection
+			amAppList.callback = { amAppInfo ->
+				try {
+					viewList.entryButtonTimestamp = System.currentTimeMillis()
+					focusEvent.triggerEvent(mapOf(0.toByte() to viewList.state.id))
+				} catch (e: BMWRemoting.ServiceException) {
+					Log.i(TAG, "Failed to trigger focus event for AM icon, recreating RHMI and trying again")
+					try {
+						recreateRhmiApp()
+						viewList.entryButtonTimestamp = System.currentTimeMillis()
+						focusEvent.triggerEvent(mapOf(0.toByte() to viewList.state.id))
+					} catch (e: BMWRemoting.ServiceException) {
+						Log.w(TAG, "Failed to trigger focus event for AM icon: $e")
+					}
+				}
+				amAppList.redrawApp(amAppInfo)
+			}
 			createAmApp()
 
 			// set up the list
@@ -161,27 +176,12 @@ class PhoneNotifications(val iDriveConnectionStatus: IDriveConnectionStatus, val
 	fun createAmApp() {
 		val name = L.NOTIFICATIONS_TITLE
 		val carAppImages = Utils.loadZipfile(carAppAssets.getImagesDB(iDriveConnectionStatus.brand ?: "common"))
-
-		val amInfo = mutableMapOf<Int, Any>(
-				0 to 145,   // basecore version
-				1 to name,  // app name
-				2 to (carAppImages["157.png"] ?: ""),
-				3 to "Addressbook",   // section
-				4 to true,
-				5 to 800,   // weight
-				8 to viewList.state.id  // mainstateId
-		)
-		// language translations, dunno which one is which
-		for (languageCode in 101..123) {
-			amInfo[languageCode] = name
-		}
-
-		synchronized(carConnection) {
-			carConnection.am_registerApp(amHandle, "androidautoidrive.notifications", amInfo)
-		}
+		val icon = carAppImages["157.png"] ?: return
+		val amAppInfo = ConcreteAMAppInfo("notifications", name, phoneAppResources.getBitmapDrawable(icon), AMCategory.ADDRESSBOOK)
+		amAppList.setApps(listOf(amAppInfo))
 	}
 
-	inner class CarAppListener(val rhmiApplication: RHMIApplication, val cdsEventHandler: CDSEventHandler): BaseBMWRemotingClient() {
+	class CarAppListener(val rhmiApplication: RHMIApplication, val amAppList: AMAppList<AMAppInfo>, val cdsEventHandler: CDSEventHandler): BaseBMWRemotingClient() {
 		var server: BMWRemotingServer? = null
 
 		fun synced() {
@@ -192,20 +192,9 @@ class PhoneNotifications(val iDriveConnectionStatus: IDriveConnectionStatus, val
 
 		override fun am_onAppEvent(handle: Int?, ident: String?, appId: String?, event: BMWRemoting.AMEvent?) {
 			synced()
-			try {
-				viewList.entryButtonTimestamp = System.currentTimeMillis()
-				focusEvent.triggerEvent(mapOf(0.toByte() to viewList.state.id))
-			} catch (e: BMWRemoting.ServiceException) {
-				Log.i(TAG, "Failed to trigger focus event for AM icon, recreating RHMI and trying again")
-				try {
-					recreateRhmiApp()
-					viewList.entryButtonTimestamp = System.currentTimeMillis()
-					focusEvent.triggerEvent(mapOf(0.toByte() to viewList.state.id))
-				} catch (e: BMWRemoting.ServiceException) {
-					Log.w(TAG, "Failed to trigger focus event for AM icon: $e")
-				}
-			}
-			createAmApp()
+			appId ?: return
+			val appInfo = amAppList.getAppInfo(appId) ?: return
+			amAppList.callback(appInfo)
 		}
 
 		override fun rhmi_onActionEvent(handle: Int?, ident: String?, actionId: Int?, args: MutableMap<*, *>?) {
